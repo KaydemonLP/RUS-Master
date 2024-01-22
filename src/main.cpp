@@ -2,6 +2,19 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
+#include <AzIoTSasToken.h>
+#include <SerialLogger.h>
+#include <az_core.h>
+#include <azure_ca.h>
+#include <ctime>
+#include "WiFiClientSecure.h"
+
+#include "DHTesp.h"
+#include "PubSubClient.h"
+#include "ArduinoJson.h"
+
+#include "iothub.h"
+
 #define START_SCAN_BUTTON 14
 
 bool g_bScanButtonPressed = false;
@@ -42,7 +55,6 @@ void I2cRead(T *response, int length); //string
 void setup() 
 {
   int c;
-  Serial.begin(115200);
   if(!Wire.begin(SDA0_Pin, SCL0_Pin, I2C_Freq)) //starting I2C Wire
   {
     Serial.println("I2C Wire Error. Going idle.");
@@ -50,6 +62,17 @@ void setup()
       delay(1);
   }
   Serial.println("Master engaged.");
+
+  setupWiFi();
+  initializeTime();
+
+  if( initIoTHub() )
+  {
+    connectMQTT();
+    mqttReconnect();
+  }
+
+  sendTestMessageToIoTHub();
 
 
   pinMode( START_SCAN_BUTTON, INPUT_PULLUP );
@@ -74,8 +97,17 @@ void loop()
   }
 
   requestNum<float>(requestCount, 4, &flPercentage);
-  Serial.printf("Request %d, register 4 (len): %f\n",requestCount,flPercentage);
+  //Serial.printf("Request %d, register 4 (len): %f\n",requestCount,flPercentage);
   requestCount++;
+
+  if (!mqttClient.connected()) mqttReconnect();
+  if (sasToken.IsExpired()) {
+    connectMQTT();
+  }
+
+  mqttClient.loop();
+
+  checkTelemetry(flPercentage);
 }
 
 void informSlave(int requestNumber, byte cmd)
