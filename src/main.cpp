@@ -1,3 +1,4 @@
+#include <Arduino.h>
 #include <Wire.h>
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
@@ -13,9 +14,13 @@
 #include "PubSubClient.h"
 #include "ArduinoJson.h"
 
+#include "Electroniccats_PN7150.h"
+
+#include "nfc.h"
+
 #include "iothub.h"
 
-#define START_SCAN_BUTTON 14
+#define START_SCAN_BUTTON 12
 
 bool g_bScanButtonPressed = false;
 
@@ -31,8 +36,10 @@ void IRAM_ATTR scanButtonInterrupt()
   }
 }
 
-#define SDA0_Pin 21
-#define SCL0_Pin 22
+#define CAM_SDA0_Pin 13
+#define CAM_SCL0_Pin 14
+#define NFC_SDA0_Pin 15
+#define NFC_SCL0_Pin 19
 #define I2C_Freq 100000
 #define I2C_DEV_ADDR 0x10
 
@@ -54,13 +61,23 @@ void I2cRead(T *response, int length); //string
 
 void setup() 
 {
-  int c;
-  if(!Wire.begin(SDA0_Pin, SCL0_Pin, I2C_Freq)) //starting I2C Wire
+
+  if(!Wire.begin(CAM_SDA0_Pin, CAM_SCL0_Pin, I2C_Freq)) //starting I2C Wire
   {
     Serial.println("I2C Wire Error. Going idle.");
     while(true)
       delay(1);
   }
+
+  if(!Wire1.begin(NFC_SDA0_Pin, NFC_SCL0_Pin, I2C_Freq)) //starting I2C Wire
+  {
+    Serial.println("I2C Wire1 Error. Going idle.");
+    while(true)
+      delay(1);
+  }
+
+  nfid::setup();
+
   Serial.println("Master engaged.");
 
   setupWiFi();
@@ -73,7 +90,6 @@ void setup()
   }
 
   sendTestMessageToIoTHub();
-
 
   pinMode( START_SCAN_BUTTON, INPUT_PULLUP );
   attachInterrupt(START_SCAN_BUTTON, scanButtonInterrupt, RISING);
@@ -108,6 +124,8 @@ void loop()
   mqttClient.loop();
 
   checkTelemetry(flPercentage);
+
+   nfid::loop();
 }
 
 void informSlave(int requestNumber, byte cmd)

@@ -3,7 +3,7 @@
 /* Azure auth data */
  // Azure Primary key for device
  // IOT hub->Devices->Bilo koji device->Primary key
-char* deviceKey = "Bski4L+vR0o3Bh5AzFa+pY6kwFnEPJZq0AIoTOOKDtg=";	
+const char* deviceKey = "Bski4L+vR0o3Bh5AzFa+pY6kwFnEPJZq0AIoTOOKDtg=";	
 // IOT hub->Devices->Bilo koji device, ime
 const char* deviceId = "LabDevice1";  // Device ID as specified in the list of devices on IoT Hub
  //[Azure IoT host name].azure-devices.net
@@ -30,7 +30,7 @@ uint8_t sasSignatureBuffer[256];  // Make sure it's of correct size, it will jus
 
 az_iot_hub_client client;
 AzIoTSasToken sasToken(
-	&client, az_span_create_from_str(deviceKey),
+	&client, az_span_create_from_str(const_cast<char*>(deviceKey)),
 	AZ_SPAN_FROM_BUFFER(sasSignatureBuffer),
 	AZ_SPAN_FROM_BUFFER(
 		mqttPasswordBuffer));	 // Authentication token for our specific device
@@ -127,12 +127,8 @@ String getTelemetryData(float percentage) { // Get the data and pack it in a JSO
   StaticJsonDocument<128> doc; // Create a JSON document we'll reuse to serialize our data into JSON
   String output = "";
 
-  doc["Sentiment"]["Status"] = "N";
-
-	JsonObject Ambient = doc.createNestedObject("Ambient");
-	Ambient["UserID"] = 1;
-  Ambient["DateTime"] = 1;
-  Ambient["Rating"] = percentage;
+	doc["UserID"] = 1;
+  doc["Rating"] = percentage;
 
 	doc["DeviceID"] = (String)deviceId;
 
@@ -152,7 +148,7 @@ int interval = 5000;
 void checkTelemetry(float percentage) { // Do not block using delay(), instead check if enough time has passed between two calls using millis() 
   currentTime = millis();
 
-  if (currentTime - lastTime >= interval) { // Subtract the current elapsed time (since we started the device) from the last time we sent the telemetry, if the result is greater than the interval, send the data again
+  if (currentTime - lastTime >= interval && percentage != 0) { // Subtract the current elapsed time (since we started the device) from the last time we sent the telemetry, if the result is greater than the interval, send the data again
     //Logger.Info("Sending telemetry...");
     sendTelemetryData(percentage);
 
