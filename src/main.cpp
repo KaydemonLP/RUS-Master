@@ -3,14 +3,8 @@
 #include <Adafruit_GFX.h>
 #include <Adafruit_SSD1306.h>
 
-#include <AzIoTSasToken.h>
-#include <SerialLogger.h>
-#include <az_core.h>
-#include <azure_ca.h>
-#include <ctime>
 #include "WiFiClientSecure.h"
 
-#include "DHTesp.h"
 #include "PubSubClient.h"
 #include "ArduinoJson.h"
 
@@ -20,7 +14,7 @@
 
 #include "iothub.h"
 
-#define START_SCAN_BUTTON 12
+#define START_SCAN_BUTTON 21
 
 bool g_bScanButtonPressed = false;
 
@@ -36,10 +30,14 @@ void IRAM_ATTR scanButtonInterrupt()
   }
 }
 
-#define CAM_SDA0_Pin 13
-#define CAM_SCL0_Pin 14
-#define NFC_SDA0_Pin 15
-#define NFC_SCL0_Pin 19
+#define CAM_SDA0_Pin 19
+#define CAM_SCL0_Pin 18
+
+#define NFC_SDA_Pin 15
+#define NFC_SCL_Pin 14
+#define NFC_IRQ_Pin 13
+#define NFC_VEN_Pin 12
+
 #define I2C_Freq 100000
 #define I2C_DEV_ADDR 0x10
 
@@ -59,9 +57,11 @@ void I2cTransmit(int requestNumber, byte registerNumber);
 template <class T>
 void I2cRead(T *response, int length); //string
 
+CNFCHandler g_NFC;
+CIoTHub g_IoTHub;
+
 void setup() 
 {
-
   if(!Wire.begin(CAM_SDA0_Pin, CAM_SCL0_Pin, I2C_Freq)) //starting I2C Wire
   {
     Serial.println("I2C Wire Error. Going idle.");
@@ -69,33 +69,57 @@ void setup()
       delay(1);
   }
 
-  if(!Wire1.begin(NFC_SDA0_Pin, NFC_SCL0_Pin, I2C_Freq)) //starting I2C Wire
-  {
-    Serial.println("I2C Wire1 Error. Going idle.");
-    while(true)
-      delay(1);
-  }
-
-  nfid::setup();
+  g_NFC.setup( &Wire1, NFC_SDA_Pin, NFC_SCL_Pin, NFC_IRQ_Pin, NFC_VEN_Pin);
 
   Serial.println("Master engaged.");
 
   setupWiFi();
   initializeTime();
 
-  if( initIoTHub() )
-  {
-    connectMQTT();
-    mqttReconnect();
-  }
-
-  sendTestMessageToIoTHub();
+  g_IoTHub.initIoTHub();
 
   pinMode( START_SCAN_BUTTON, INPUT_PULLUP );
   attachInterrupt(START_SCAN_BUTTON, scanButtonInterrupt, RISING);
 }
 
 void informSlave(int requestNumber, byte cmd);
+
+ // Get the data and pack it in a JSON message
+String getTelemetryData(char *deviceId, float percentage)
+{
+  StaticJsonDocument<128> doc; // Create a JSON document we'll reuse to serialize our data into JSON
+  String output = "";
+
+	doc["UserID"] = 1;
+  doc["Rating"] = percentage;
+
+	doc["DeviceID"] = (String)deviceId;
+
+	serializeJson(doc, output);
+
+	Serial.println(output.c_str());
+  return output;
+}
+
+long lastTime, currentTime = 0;
+int interval = 5000;
+void checkTelemetry(float percentage)
+{ 
+  // Do not block using delay(), instead check if enough time has passed between two calls using millis() 
+  currentTime = millis();
+
+  if (currentTime - lastTime >= interval && percentage != 0)
+  { 
+    // Subtract the current elapsed time (since we started the device) from the last time we sent the telemetry, if the result is greater than the interval, send the data again
+    Serial.println("Sending telemetry...");
+
+    String data = getTelemetryData(g_IoTHub.GetDeviceID(), percentage);
+
+    g_IoTHub.sendTelemetryData(data);
+
+    lastTime = currentTime;
+  }
+}
 
 void loop() 
 {
@@ -116,16 +140,11 @@ void loop()
   //Serial.printf("Request %d, register 4 (len): %f\n",requestCount,flPercentage);
   requestCount++;
 
-  if (!mqttClient.connected()) mqttReconnect();
-  if (sasToken.IsExpired()) {
-    connectMQTT();
-  }
-
-  mqttClient.loop();
+  g_IoTHub.loop();
 
   checkTelemetry(flPercentage);
 
-   nfid::loop();
+  g_NFC.loop();
 }
 
 void informSlave(int requestNumber, byte cmd)
