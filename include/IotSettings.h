@@ -3,9 +3,9 @@
 
 /* Wifi, connect to a local router*/
 // WIFI Name
-const char *ssid = "Bohnec";
+const char *ssid = "The nasty Kay demon";
 // WIFI PASSWORD
-const char *pass = "BOBIJEVAMREZA";
+const char *pass = "trollfacegymnastics";
 
 /* Azure auth data */
 // Azure Primary key for device

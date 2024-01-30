@@ -99,53 +99,15 @@ void CNFCHandler::setup( TwoWire *wire, int SDA_Pin, int SCL_Pin, int IRQ_Pin, i
 void CNFCHandler::loop()
 {
   if( m_NFC->isTagDetected() )
-    Serial.println("Tag detected");
-  else
-    Serial.println("Tag not detected");
-
-  if(m_NFC->isTagDetected())
   {
     switch (m_NFC->remoteDevice.getProtocol()) 
     {
-      case PROT_T2T:
-        Serial.println(" - Found ISO14443-3A(T2T) card");
-        switch (m_NFC->remoteDevice.getModeTech()) {  // Indetify card technology
-          case (MODE_POLL | TECH_PASSIVE_NFCA):
-            char tmp[16];
-            Serial.print("\tSENS_RES = ");
-            sprintf(tmp, "0x%.2X", m_NFC->remoteDevice.getSensRes()[0]);
-            Serial.print(tmp);
-            Serial.print(" ");
-            sprintf(tmp, "0x%.2X", m_NFC->remoteDevice.getSensRes()[1]);
-            Serial.print(tmp);
-            Serial.println(" ");
-
-            Serial.print("\tNFCID = ");
-            PrintBuf(m_NFC->remoteDevice.getNFCID(), m_NFC->remoteDevice.getNFCIDLen());
-
-            if (m_NFC->remoteDevice.getSelResLen() != 0) {
-              Serial.print("\tSEL_RES = ");
-              sprintf(tmp, "0x%.2X", m_NFC->remoteDevice.getSelRes()[0]);
-              Serial.print(tmp);
-              Serial.println(" ");
-            }
-            break;
-        }
-        PCD_ISO14443_3A_scenario(m_NFC);
-        break;
-
       default:
         Serial.print(" - Found a card, but it is not ISO14443-3A(T2T)!: ");
         Serial.println(m_NFC->remoteDevice.getModeTech());
         Serial.println(MODE_POLL | TECH_PASSIVE_NFCA);
         break;
     }
-
-    //* It can detect multiple cards at the same time if they use the same protocol
-    if (m_NFC->remoteDevice.hasMoreTags()) {
-      m_NFC->activateNextTagDiscovery();
-    }
-
     Serial.println("Remove the Card");
     m_NFC->waitForTagRemoval();
     Serial.println("CARD REMOVED!");
@@ -154,5 +116,19 @@ void CNFCHandler::loop()
   Serial.println("Restarting...");
   m_NFC->reset();
   Serial.println("Waiting for an ISO14443-3A Card...");
-  delay(500);
+}
+
+bool CNFCHandler::CheckCard(bool bWait)
+{
+  return m_NFC->isTagDetected();
+}
+
+void CNFCHandler::WaitForRemoval()
+{
+  m_NFC->waitForTagRemoval();
+}
+
+void CNFCHandler::Reset()
+{
+  m_NFC->reset();
 }

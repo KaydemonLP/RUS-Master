@@ -13,7 +13,9 @@
 #include "nfc.h"
 
 #include "iothub.h"
-
+/*
+TwoWire Wire2(2);
+*/
 #define START_SCAN_BUTTON 21
 
 bool g_bScanButtonPressed = false;
@@ -38,6 +40,9 @@ void IRAM_ATTR scanButtonInterrupt()
 #define NFC_IRQ_Pin 13
 #define NFC_VEN_Pin 12
 
+#define DISPLAY_SDA_Pin 22
+#define DISPLAY_SCL_Pin 23
+
 #define I2C_Freq 100000
 #define I2C_DEV_ADDR 0x10
 
@@ -60,8 +65,14 @@ void I2cRead(T *response, int length); //string
 CNFCHandler g_NFC;
 CIoTHub g_IoTHub;
 
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+Adafruit_SSD1306 g_Screen(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire1, -1); //OLED
+
 void setup() 
 {
+  Serial.begin(115200);
+
   if(!Wire.begin(CAM_SDA0_Pin, CAM_SCL0_Pin, I2C_Freq)) //starting I2C Wire
   {
     Serial.println("I2C Wire Error. Going idle.");
@@ -69,7 +80,26 @@ void setup()
       delay(1);
   }
 
+/*
+  if(!Wire2.begin(DISPLAY_SDA_Pin, DISPLAY_SCL_Pin, I2C_Freq)) //starting I2C Wire
+  {
+    Serial.println("I2C Wire Error. Going idle.");
+    while(true)
+      delay(1);
+  }  */
+
   g_NFC.setup( &Wire1, NFC_SDA_Pin, NFC_SCL_Pin, NFC_IRQ_Pin, NFC_VEN_Pin);
+
+  if(!g_Screen.begin(SSD1306_SWITCHCAPVCC, 0x3C))
+  {
+    Serial.println("Screen not present.");
+    while(1)
+      delay(1);
+  }
+  g_Screen.clearDisplay();
+  g_Screen.setTextColor(WHITE);
+  g_Screen.setTextSize(0);
+  g_Screen.display();
 
   Serial.println("Master engaged.");
 
@@ -101,50 +131,170 @@ String getTelemetryData(char *deviceId, float percentage)
   return output;
 }
 
-long lastTime, currentTime = 0;
-int interval = 5000;
-void checkTelemetry(float percentage)
-{ 
-  // Do not block using delay(), instead check if enough time has passed between two calls using millis() 
-  currentTime = millis();
+float g_Percentage = -1;
 
-  if (currentTime - lastTime >= interval && percentage != 0)
-  { 
-    // Subtract the current elapsed time (since we started the device) from the last time we sent the telemetry, if the result is greater than the interval, send the data again
-    Serial.println("Sending telemetry...");
+enum {
+  CMD_IS_SCANNING = 2,
+  CMD_START_SCAN,
+  CMD_GET_RESULT
+};
 
-    String data = getTelemetryData(g_IoTHub.GetDeviceID(), percentage);
+enum {
+  STATE_IDLE = 0,
+  STATE_CONFIRM_SCAN,
+  STATE_SCANNING,
+  STATE_CONFIRM_RESULT
+};
 
-    g_IoTHub.sendTelemetryData(data);
+int state = STATE_IDLE;
 
-    lastTime = currentTime;
-  }
-}
+struct stateinfo
+{
+  int user = 0;
+};
+
+stateinfo stateInfo;
+
+const char *rating [] = 
+{
+  ":))",
+  ":)",
+  ":|",
+  ":(",
+  ":(("
+};
 
 void loop() 
 {
+  g_Screen.clearDisplay();
+  g_Screen.setCursor(0, 1);
+
   static int requestCount = 0;
   int responseReqCount;
-  char r5[5];
-  float flPercentage;
+  float flPercentage = -1;
+  bool bIsScanning = false;
 
-  if( g_bScanButtonPressed )
-  {
-    informSlave(requestCount, 3);
-    requestCount++;
-    g_bScanButtonPressed = false;
-    Serial.println("Pressed!");
-  }
-
-  requestNum<float>(requestCount, 4, &flPercentage);
-  //Serial.printf("Request %d, register 4 (len): %f\n",requestCount,flPercentage);
+  requestNum<float>(requestCount, CMD_GET_RESULT, &flPercentage);
+  //Serial.printf("Request %d, command 4 (len): %f\n",requestCount,flPercentage);
   requestCount++;
+
+  requestNum<bool>(requestCount, CMD_IS_SCANNING, &bIsScanning);
+  requestCount++;
+  //Serial.printf("Request %d, command 2 (len): %d\n",requestCount, bIsScanning);
 
   g_IoTHub.loop();
 
-  checkTelemetry(flPercentage);
+  switch( state )
+  {
+    case STATE_IDLE:
+    {
+      // Debounce scan unless we're in confirm scan
+      g_bScanButtonPressed = false;
+      g_Screen.println("Prislonite karticu.");
 
-  g_NFC.loop();
+      bool bCardExists = g_NFC.CheckCard();
+      if( bCardExists )
+      {
+        state = STATE_CONFIRM_SCAN;
+
+        g_Screen.clearDisplay();
+        g_Screen.setCursor(0, 1);
+        g_Screen.println("Uspjeh!\nOdmaknite kartu.");
+        g_Screen.display();
+        g_NFC.WaitForRemoval();
+      }
+      g_NFC.Reset();
+    }
+    break;
+    case STATE_CONFIRM_SCAN:
+    {
+      g_Screen.println("Pritisnite gumb za pocetak skena.");
+      g_Screen.println("Prislonite ponovno karticu za prekid.");
+
+      bool bCardExists = g_NFC.CheckCard();
+      if( bCardExists )
+      {
+        state = STATE_IDLE;
+
+        g_Screen.clearDisplay();
+        g_Screen.setCursor(0, 1);
+        g_Screen.println("Prekid uspjesan!\nOdmaknite kartu.");
+        g_Screen.display();
+        g_NFC.WaitForRemoval();
+        g_NFC.Reset();
+        break;
+      }
+      g_NFC.Reset();
+
+      if( g_bScanButtonPressed )
+      {
+        informSlave(requestCount, CMD_START_SCAN);
+        requestCount++;
+        g_bScanButtonPressed = false;
+        Serial.println("Pressed!");
+        state = STATE_SCANNING;
+      }
+    }
+    break;
+    case STATE_SCANNING:
+    {
+      g_Screen.println("Skeniranje...");
+
+      if( !bIsScanning )
+      {
+        if( flPercentage != -1 )
+        {
+          g_Percentage = flPercentage;
+          state = STATE_CONFIRM_RESULT;
+          break;
+        }
+      }
+    }
+    break;
+    case STATE_CONFIRM_RESULT:
+    {
+      int iRating = 0;
+
+      if( g_Percentage >= 0.6f )
+        iRating = 0;
+      else if( g_Percentage >= 0.48 )
+        iRating = 1;
+      else if( g_Percentage >= 0.36 )
+        iRating = 2;
+      else if( g_Percentage >= 0.24 )
+        iRating = 3;
+      else
+        iRating = 4;
+
+      g_Screen.printf("Rating: %s\n", rating[iRating] );
+      g_Screen.println("Prislonite karticu za potvrdu.");
+
+      bool bCardExists = g_NFC.CheckCard();
+      if( bCardExists )
+      {
+        state = STATE_IDLE;
+        g_Screen.clearDisplay();
+        g_Screen.setCursor(0, 1);
+        g_Screen.println("Uspjeh!\nOdmaknite kartu za slanje podataka.");
+        g_Screen.display();
+        g_NFC.WaitForRemoval();
+        g_NFC.Reset();
+        Serial.println("Sending telemetry...");
+        String data = getTelemetryData(g_IoTHub.GetDeviceID(), g_Percentage);
+        g_IoTHub.sendTelemetryData(data);
+
+        g_Screen.clearDisplay();
+        g_Screen.setCursor(0, 1);
+        g_Screen.println("Podatci uspjesno poslani!");
+        g_Screen.display();
+        delay(3000);
+        break;
+      }
+    }
+    break;
+  }
+  
+  g_Screen.display();
 }
 
 void informSlave(int requestNumber, byte cmd)
