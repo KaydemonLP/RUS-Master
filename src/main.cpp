@@ -115,15 +115,19 @@ void setup()
 void informSlave(int requestNumber, byte cmd);
 
  // Get the data and pack it in a JSON message
-String getTelemetryData(char *deviceId, float percentage)
+String createTelemetryData(char *deviceId, menu menu, float rating)
 {
   StaticJsonDocument<128> doc; // Create a JSON document we'll reuse to serialize our data into JSON
   String output = "";
 
-	doc["UserID"] = 1;
-  doc["Rating"] = percentage;
+	doc["UserID"] = menu.iUserID;
+  doc["Rating"] = rating;
 
 	doc["DeviceID"] = (String)deviceId;
+
+  auto menuArray = doc.createNestedArray("Menu");
+  for( int i = 0; i < menu.iMenuLen; i++ )
+    menuArray.add(menu.iaMenu[i]);
 
 	serializeJson(doc, output);
 
@@ -148,12 +152,7 @@ enum {
 
 int state = STATE_IDLE;
 
-struct stateinfo
-{
-  int user = 0;
-};
-
-stateinfo stateInfo;
+menu currMenu;
 
 const char *rating [] = 
 {
@@ -195,19 +194,47 @@ void loop()
       bool bCardExists = g_NFC.CheckCard();
       if( bCardExists )
       {
-        state = STATE_CONFIRM_SCAN;
+        int iRetCode = g_NFC.ReadMenu(currMenu);
+        if( iRetCode != 0 )
+        {
+          g_Screen.clearDisplay();
+          g_Screen.setCursor(0, 1);
+          switch( iRetCode )
+          {
+            case 1:
+              g_Screen.println("Pogreska kod detekcije kartice!\nOdmaknite kartu.");
+            break;
+            default:
+            case 2:
+              g_Screen.println("Pogreska kod citanja kartice!\nOdmaknite kartu.");
+            break;
+            case 3:
+              g_Screen.println("Neispravna vrsta kartice!\nOdmaknite kartu.");
+            break;
+          }
+          
+          g_Screen.display();
+          g_NFC.WaitForRemoval();
 
-        g_Screen.clearDisplay();
-        g_Screen.setCursor(0, 1);
-        g_Screen.println("Uspjeh!\nOdmaknite kartu.");
-        g_Screen.display();
-        g_NFC.WaitForRemoval();
+          currMenu.Clear();
+        }
+        else
+        {
+          state = STATE_CONFIRM_SCAN;
+
+          g_Screen.clearDisplay();
+          g_Screen.setCursor(0, 1);
+          g_Screen.println("Uspjeh!\nOdmaknite kartu.");
+          g_Screen.display();
+          g_NFC.WaitForRemoval();
+        }
       }
       g_NFC.Reset();
     }
     break;
     case STATE_CONFIRM_SCAN:
     {
+      g_Screen.printf("Pozdrav korisnik: %d.\n", currMenu.iUserID);
       g_Screen.println("Pritisnite gumb za pocetak skena.");
       g_Screen.println("Prislonite ponovno karticu za prekid.");
 
@@ -280,8 +307,10 @@ void loop()
         g_NFC.WaitForRemoval();
         g_NFC.Reset();
         Serial.println("Sending telemetry...");
-        String data = getTelemetryData(g_IoTHub.GetDeviceID(), g_Percentage);
+        String data = createTelemetryData(g_IoTHub.GetDeviceID(), currMenu, g_Percentage);
         g_IoTHub.sendTelemetryData(data);
+
+        currMenu.Clear();
 
         g_Screen.clearDisplay();
         g_Screen.setCursor(0, 1);

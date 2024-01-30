@@ -16,12 +16,16 @@
 #include "nfc.h"
 
 #define PN7150_ADDR (0x28)
+#define PN7150_ADDR (0x28)
 
-#define BLK_NB_MFC 4                                // Block tat wants to be read
+#define BLK_NB_MFC 4                                // Block that wants to be read
 #define KEY_MFC 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF  // Default Mifare Classic key
 
-#define BLK_NB_ISO14443_3A (5)  // Block to be read it
+#define AUTH_CODE 'o', 'p'
 
+// Data to be written in the Mifare Classic block
+// Structure AUTHCODE_1, AUTHCODE_2, USERID, MENULEN, MENU_ITEM
+#define DATA_WRITE_MFC AUTH_CODE, 1, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff
 
 void PrintBuf(const byte* data, const uint32_t numBytes) {  // Print hex data buffer in format
   uint32_t szPos;
@@ -31,31 +35,58 @@ void PrintBuf(const byte* data, const uint32_t numBytes) {  // Print hex data bu
     if (data[szPos] <= 0xF)
       Serial.print(F("0"));
     Serial.print(data[szPos] & 0xff, HEX);
-    if ((numBytes > 1) && (szPos != numBytes - 1))
+    if ((numBytes > 1) && (szPos != numBytes - 1)) {
       Serial.print(F(" "));
+    }
   }
   Serial.println();
 }
 
-void PCD_ISO14443_3A_scenario( Electroniccats_PN7150 *nfc) {
+uint8_t PCD_MIFARE_scenario(Electroniccats_PN7150 *nfc) {
+  Serial.println("Start reading process...");
   bool status;
   unsigned char Resp[256];
   unsigned char RespSize;
-  /* Read block */
-  unsigned char ReadBlock[] = {0x30, BLK_NB_ISO14443_3A};
+  /* Authenticate sector 1 with generic keys */
+  unsigned char Auth[] = {0x40, BLK_NB_MFC / 4, 0x10, KEY_MFC};
+  /* Read block 4 */
+  unsigned char Read[] = {0x10, 0x30, BLK_NB_MFC};
+  /* Write block 4 */
+  unsigned char WritePart1[] = {0x10, 0xA0, BLK_NB_MFC};
+  unsigned char WritePart2[] = {0x10, DATA_WRITE_MFC};
 
-  status = nfc->readerTagCmd(ReadBlock, sizeof(ReadBlock), Resp, &RespSize);
-  if ((status == NFC_ERROR) || (Resp[RespSize - 1] != 0x00)) {
-    Serial.print("Error reading block: ");
-    Serial.print(ReadBlock[1], HEX);
-    Serial.print(" with error: ");
-    Serial.print(Resp[RespSize - 1], HEX);
-    return;
+  /* Authenticate */
+  status = nfc->readerTagCmd(Auth, sizeof(Auth), Resp, &RespSize);
+  if ((status == NFC_ERROR) || (Resp[RespSize - 1] != 0)) {
+    Serial.println("Auth error!");
+    return 1;
   }
-  Serial.print("------------------------Block ");
-  Serial.print(BLK_NB_ISO14443_3A, HEX);
+
+  /* Write block */
+  status = nfc->readerTagCmd(WritePart1, sizeof(WritePart1), Resp, &RespSize);
+  if ((status == NFC_ERROR) || (Resp[RespSize - 1] != 0)) {
+    Serial.print("Error writing block!");
+    return 3;
+  }
+  status = nfc->readerTagCmd(WritePart2, sizeof(WritePart2), Resp, &RespSize);
+  if ((status == NFC_ERROR) || (Resp[RespSize - 1] != 0)) {
+    Serial.print("Error writing block!");
+    return 4;
+  }
+  /* Read block again to see te changes*/
+  status = nfc->readerTagCmd(Read, sizeof(Read), Resp, &RespSize);
+  if ((status == NFC_ERROR) || (Resp[RespSize - 1] != 0)) {
+    Serial.print("Error reading block!");
+    return 5;
+  }
+  Serial.print("------------------------Sector ");
+  Serial.print(BLK_NB_MFC / 4, DEC);
   Serial.println("-------------------------");
-  PrintBuf(Resp, 4);
+  Serial.print("----------------- New Data in Block ");
+  Serial.print(BLK_NB_MFC, DEC);
+  Serial.println("-----------------");
+  PrintBuf(Resp + 1, RespSize - 2);
+  return 0;
 }
 
 #define I2C_Freq 100000
@@ -100,14 +131,24 @@ void CNFCHandler::loop()
 {
   if( m_NFC->isTagDetected() )
   {
-    switch (m_NFC->remoteDevice.getProtocol()) 
-    {
-      default:
-        Serial.print(" - Found a card, but it is not ISO14443-3A(T2T)!: ");
-        Serial.println(m_NFC->remoteDevice.getModeTech());
-        Serial.println(MODE_POLL | TECH_PASSIVE_NFCA);
-        break;
-    }
+    Serial.println(m_NFC->remoteDevice.getProtocol());
+    Serial.println(m_NFC->remoteDevice.getModeTech());
+    Serial.println(m_NFC->remoteDevice.getInterface());
+    
+    menu TempMenu;
+    TempMenu.iUserID = 1; // User id number 1
+    TempMenu.iMenuLen = 3; // amount of menu items
+    TempMenu.iaMenu[0] = 1; // Bread
+    TempMenu.iaMenu[1] = 56; // Sausage
+    TempMenu.iaMenu[2] = 80; // Juice
+    
+    WriteMenu(TempMenu);
+
+    menu out;
+    ReadMenu(out);
+
+    out.Print();
+
     Serial.println("Remove the Card");
     m_NFC->waitForTagRemoval();
     Serial.println("CARD REMOVED!");
@@ -131,4 +172,109 @@ void CNFCHandler::WaitForRemoval()
 void CNFCHandler::Reset()
 {
   m_NFC->reset();
+}
+
+int CNFCHandler::WriteMenu(menu newMenu)
+{
+  Serial.println("Start reading process...");
+  bool status;
+  unsigned char Resp[256];
+  unsigned char RespSize;
+  /* Authenticate sector 1 with generic keys */
+  unsigned char Auth[] = {0x40, BLK_NB_MFC / 4, 0x10, KEY_MFC};
+  /* Write block 4 */
+  unsigned char WritePart1[] = {0x10, 0xA0, BLK_NB_MFC};
+  unsigned char WriteDataStart[] = {0x10, AUTH_CODE};
+  unsigned char WritePart2[17];
+  memcpy(WritePart2, WriteDataStart, sizeof(WriteDataStart));
+
+  int iWriteStart = 3; // sizeof(WriteDataStart), 0x10, 'o', 'p'
+  WritePart2[iWriteStart] = newMenu.iUserID;
+  iWriteStart++;
+  WritePart2[iWriteStart] = newMenu.iMenuLen;
+  iWriteStart++;
+
+  for( int i = 0; i < newMenu.iMenuLen; i++ )
+  {
+    WritePart2[iWriteStart] = newMenu.iaMenu[i];
+    iWriteStart++;
+  }
+
+  // Clear the rest
+  for( iWriteStart; iWriteStart < 17; iWriteStart++ )
+  {
+    WritePart2[iWriteStart] = 0;
+  }
+
+  /* Authenticate */
+  status = m_NFC->readerTagCmd(Auth, sizeof(Auth), Resp, &RespSize);
+  if ((status == NFC_ERROR) || (Resp[RespSize - 1] != 0)) {
+    Serial.println("Auth error!");
+    return 1;
+  }
+
+  /* Write block */
+  status = m_NFC->readerTagCmd(WritePart1, sizeof(WritePart1), Resp, &RespSize);
+  if ((status == NFC_ERROR) || (Resp[RespSize - 1] != 0)) {
+    Serial.print("Error writing block!");
+    return 3;
+  }
+  status = m_NFC->readerTagCmd(WritePart2, sizeof(WritePart2), Resp, &RespSize);
+  if ((status == NFC_ERROR) || (Resp[RespSize - 1] != 0)) {
+    Serial.print("Error writing block!");
+    return 4;
+  }
+
+  return 0;
+}
+
+int CNFCHandler::ReadMenu(menu &out)
+{
+  Serial.println("Start reading process...");
+  bool status;
+  unsigned char Resp[256];
+  unsigned char RespSize;
+  /* Authenticate sector 1 with generic keys */
+  unsigned char Auth[] = {0x40, BLK_NB_MFC / 4, 0x10, KEY_MFC};
+  /* Read block 4 */
+  unsigned char Read[] = {0x10, 0x30, BLK_NB_MFC};
+
+  /* Authenticate */
+  status = m_NFC->readerTagCmd(Auth, sizeof(Auth), Resp, &RespSize);
+  if ((status == NFC_ERROR) || (Resp[RespSize - 1] != 0)) {
+    Serial.println("Auth error!");
+    return 1;
+  }
+
+  /* Read block again to see te changes*/
+  status = m_NFC->readerTagCmd(Read, sizeof(Read), Resp, &RespSize);
+  if ((status == NFC_ERROR) || (Resp[RespSize - 1] != 0)) {
+    Serial.print("Error reading block!");
+    return 2;
+  }
+
+  unsigned char *data = Resp + 1;
+  int numBytes = RespSize - 2;
+
+  if( data[0] != 'o' && data[1] != 'p' )
+  {
+    Serial.println("KARTICA NIJE ISPRAVNO AUTENTIFICIRANA!");
+    return 3;
+  }
+
+  data += 2;
+  numBytes-= 2;
+
+  out.iUserID = data[0];
+  data++; numBytes--;
+  out.iMenuLen = data[0];
+  data++; numBytes--;
+  
+  uint32_t iPos;
+  for( iPos = 0; iPos < numBytes; iPos++ )
+  {
+    out.iaMenu[iPos] = data[iPos];
+  }
+
+  return 0;
 }
