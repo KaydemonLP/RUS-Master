@@ -40,9 +40,6 @@ void IRAM_ATTR scanButtonInterrupt()
 #define NFC_IRQ_Pin 13
 #define NFC_VEN_Pin 12
 
-#define DISPLAY_SDA_Pin 22
-#define DISPLAY_SCL_Pin 23
-
 #define I2C_Freq 100000
 #define I2C_DEV_ADDR 0x10
 
@@ -76,17 +73,7 @@ void setup()
   if(!Wire.begin(CAM_SDA0_Pin, CAM_SCL0_Pin, I2C_Freq)) //starting I2C Wire
   {
     Serial.println("I2C Wire Error. Going idle.");
-    while(true)
-      delay(1);
   }
-
-/*
-  if(!Wire2.begin(DISPLAY_SDA_Pin, DISPLAY_SCL_Pin, I2C_Freq)) //starting I2C Wire
-  {
-    Serial.println("I2C Wire Error. Going idle.");
-    while(true)
-      delay(1);
-  }  */
 
   g_NFC.setup( &Wire1, NFC_SDA_Pin, NFC_SCL_Pin, NFC_IRQ_Pin, NFC_VEN_Pin);
 

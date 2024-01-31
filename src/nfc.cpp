@@ -27,68 +27,6 @@
 // Structure AUTHCODE_1, AUTHCODE_2, USERID, MENULEN, MENU_ITEM
 #define DATA_WRITE_MFC AUTH_CODE, 1, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff
 
-void PrintBuf(const byte* data, const uint32_t numBytes) {  // Print hex data buffer in format
-  uint32_t szPos;
-  for (szPos = 0; szPos < numBytes; szPos++) {
-    Serial.print(F("0x"));
-    // Append leading 0 for small values
-    if (data[szPos] <= 0xF)
-      Serial.print(F("0"));
-    Serial.print(data[szPos] & 0xff, HEX);
-    if ((numBytes > 1) && (szPos != numBytes - 1)) {
-      Serial.print(F(" "));
-    }
-  }
-  Serial.println();
-}
-
-uint8_t PCD_MIFARE_scenario(Electroniccats_PN7150 *nfc) {
-  Serial.println("Start reading process...");
-  bool status;
-  unsigned char Resp[256];
-  unsigned char RespSize;
-  /* Authenticate sector 1 with generic keys */
-  unsigned char Auth[] = {0x40, BLK_NB_MFC / 4, 0x10, KEY_MFC};
-  /* Read block 4 */
-  unsigned char Read[] = {0x10, 0x30, BLK_NB_MFC};
-  /* Write block 4 */
-  unsigned char WritePart1[] = {0x10, 0xA0, BLK_NB_MFC};
-  unsigned char WritePart2[] = {0x10, DATA_WRITE_MFC};
-
-  /* Authenticate */
-  status = nfc->readerTagCmd(Auth, sizeof(Auth), Resp, &RespSize);
-  if ((status == NFC_ERROR) || (Resp[RespSize - 1] != 0)) {
-    Serial.println("Auth error!");
-    return 1;
-  }
-
-  /* Write block */
-  status = nfc->readerTagCmd(WritePart1, sizeof(WritePart1), Resp, &RespSize);
-  if ((status == NFC_ERROR) || (Resp[RespSize - 1] != 0)) {
-    Serial.print("Error writing block!");
-    return 3;
-  }
-  status = nfc->readerTagCmd(WritePart2, sizeof(WritePart2), Resp, &RespSize);
-  if ((status == NFC_ERROR) || (Resp[RespSize - 1] != 0)) {
-    Serial.print("Error writing block!");
-    return 4;
-  }
-  /* Read block again to see te changes*/
-  status = nfc->readerTagCmd(Read, sizeof(Read), Resp, &RespSize);
-  if ((status == NFC_ERROR) || (Resp[RespSize - 1] != 0)) {
-    Serial.print("Error reading block!");
-    return 5;
-  }
-  Serial.print("------------------------Sector ");
-  Serial.print(BLK_NB_MFC / 4, DEC);
-  Serial.println("-------------------------");
-  Serial.print("----------------- New Data in Block ");
-  Serial.print(BLK_NB_MFC, DEC);
-  Serial.println("-----------------");
-  PrintBuf(Resp + 1, RespSize - 2);
-  return 0;
-}
-
 #define I2C_Freq 100000
 
 void CNFCHandler::setup( TwoWire *wire, int SDA_Pin, int SCL_Pin, int IRQ_Pin, int VEN_Pin ) 
@@ -96,9 +34,7 @@ void CNFCHandler::setup( TwoWire *wire, int SDA_Pin, int SCL_Pin, int IRQ_Pin, i
   m_Wire = wire;
   if(!m_Wire->begin(SDA_Pin, SCL_Pin, I2C_Freq)) //starting I2C Wire
   {
-    Serial.println("I2C Wire1 Error. Going idle.");
-    while(true)
-      delay(1);
+    Serial.println("I2C Wire Error. Going idle.");
   }
 
   m_NFC = new Electroniccats_PN7150(IRQ_Pin, VEN_Pin, PN7150_ADDR, m_Wire);  // creates a global NFC device interface object, attached to pins 7 (IRQ) and 8 (VEN) and using the default I2C address 0x28
@@ -108,20 +44,14 @@ void CNFCHandler::setup( TwoWire *wire, int SDA_Pin, int SCL_Pin, int IRQ_Pin, i
   Serial.println("Initializing...");
   if (m_NFC->connectNCI()) {  // Wake up the board
     Serial.println("Error while setting up the mode, check connections!");
-    while (1)
-      ;
   }
 
   if (m_NFC->configureSettings()) {
     Serial.println("The Configure Settings failed!");
-    while (1)
-      ;
   }
 
   if (m_NFC->configMode()) {  // Set up the configuration mode
     Serial.println("The Configure Mode failed!!");
-    while (1)
-      ;
   }
   m_NFC->startDiscovery();  // NCI Discovery mode
   Serial.println("Waiting for an ISO14443-3A Card...");
